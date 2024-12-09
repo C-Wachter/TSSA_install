@@ -1,22 +1,22 @@
-﻿#Requires -Version 5.0
+#Requires -Version 5.0
 
 <#
 .SYNOPSIS
 Installs TSSA RSCD Agent on target
 
 .DESCRIPTION
-This script will install TSSA RSCD Agent provided in the package and configure it with the user data given as parameter.
-It will also check if Visual C++ runtime is installed ($minimum_visual_c_runtime_version contains the required version)
-and install the VC++ runtime module. if required.
+This script will install TSSA RSCD Agent provided in the package and configure it with the customer and account 
+provided as parameters. It will also check if Visual C++ runtime is installed ($minimum_visual_c_runtime_version
+contains the required version) and install the VC++ runtime module. if required.
 
 .EXAMPLE
-Installscript -user 'Kunde_L3AdminW:* rw,map=Administrator'
+Installscript -Customer 'Kunde' -Account 'Administrator'
 
 .NOTES
 Minimum OS Architecture Supported: Windows Server 2016
-
 Release Notes: Release 0.7 by Clemens Wachter (clemens.wachter@atos.net)
 Version history
+0.8 Replaced Parameter -User by -Customer -Account
 0.7 Add Siemens special (Step 7)
 0.6 Check if Port 4750 is listening
 0.5 Added try/catch for error handling and logging
@@ -39,10 +39,13 @@ Requires Atos Packageinstaller
 #>
 
 
-#Get Parameter User from command line
+#Get Parameters $Customer and $Account from command line
 Param (
     [Parameter(Mandatory = $true)]
-    [String]$User   #TSSA_Connect_String in the form 'Customer_L3AdminX:* rw,map=LocalAdmin'
+    [String]$Customer   #Customer, Script will convert to first part of $tssa_connect_string in the form 'Customer_L3AdminX:*"
+    ,
+    [Parameter(Mandatory = $true)]
+    [String]$Account     #Local Administrator, Script will convert to 2nd part of $tssa_connect_string in the form 'rw,map=Administrator'
 )
 
 #Define constants
@@ -88,7 +91,7 @@ Write-Output ("[{0}] {1}: {2}" -F (Get-Date -UFormat $LogDateFormat), $loglevel,
 # 3. Installation TSSA MSI-File /qn usw.
 # 4. RSCD service stoppen
 # 5. Berechtigungen auf C:\Windows\rsc prüfen und ggfs setzen
-# 6. Änderungen an users.local (param -users) und ggfs anderen Dateien
+# 6. Änderungen an users.local (param -Customer -Account) und ggfs anderen Dateien
 # 7. Sonderlocke Siemens
 # 8. RSCD service starten
 # 9. Status von Port 4750 prüfen
@@ -165,8 +168,16 @@ $current_acl.AddAccessRule($change_acl)
 set-acl -AclObject $current_acl -Path $target_file
 
 #Step 6: Edit users.local
+if ($Customer -like "siteadmin*") {
+    $tssa_connect_string=$Customer+":* rw,map="+$Account
+} 
+else {
+    $tssa_connect_string=$Customer+"_L3AdminW:* rw,map="+$Account
+}
+Write-Logging -Loglevel Information -Message Created TSSA Connect String $tssa_connect_string
+
 try {
-    Add-Content -Path $target_file -Value $User -ErrorAction Stop
+    Add-Content -Path $target_file -Value $tssa_connect_string -ErrorAction Stop
     Write-Logging -Loglevel Information -Message "Added user to users.local"
 }
 catch {
@@ -174,7 +185,7 @@ catch {
 }
 
 #Step 7: Siemens special
-If ($User -like "*siteadmin*") {
+If ($Customer -like "siteadmin*") {
     #Step 7.1: Get access rights to c:\windows\rsc\secure
     $target_file = Join-Path -Path $tssa_config_dir -ChildPath $tssa_secure_file
     $current_acl = get-acl -Path $target_file
